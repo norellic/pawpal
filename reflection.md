@@ -4,13 +4,40 @@
 
 **a. Initial design**
 
-- Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+Three core actions:
+1. Owner should be able to add care tasks, each with a priority and duration
+2. Owner should be able to indicate preferences and availability
+3. Owner should be able to see why the plan chose what it chose
+
+- Briefly describe your initial UML design. What classes did you include, and what responsibilities did you assign to each?
+
+My first draft was a hierarchy of Owner, Pet, and Task. Owner held a name and a free-text preferences field, plus a method to add pets. Pet held name, species, breed, and age, plus a method to add tasks. Task was pure data — title, duration, priority, and a pair of fields for whether it repeated and how often.
+
+On the scheduling side, a Scheduler took the list of tasks and a single `available_minutes` number representing how much time the owner had, sorted the tasks by priority, and packed them into that time budget. It returned a Plan, which held the tasks that fit (each paired with a start time, as a ScheduledTask) and the tasks that didn't, plus an `explain()` method to justify the choices. The Plan covered one day.
+
+Responsibilities split roughly into three groups: Owner and Pet own the data and the relationships between them, Task is a passive record of what needs doing, and Scheduler holds all the decision-making — nothing else in the system decides what gets scheduled or when.
 
 **b. Design changes**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
+- Did your design change during implementation? If yes, describe at least one change and why you made it.
+
+Quite a bit. Most of the change happened while iterating on the UML itself, before writing any logic.
+
+**Ownership and scope.** My first draft gave Owner a list of pets. I narrowed that to a single pet to keep the MVP small, then went back to multiple pets once it was clear the scheduler should plan for a household, not one animal. That round trip added a new responsibility to Owner: `get_all_tasks()`, which flattens every pet's task list into one collection. The question that settled it was who should know how tasks are nested — I decided the Scheduler shouldn't, so Owner absorbs the aggregation and hands over a flat list.
+
+**Pruning attributes that did nothing.** The first draft carried fields that looked reasonable but had no consumer: `breed` and `age` on Pet, and a free-text `preferences` field on Owner. Preferences was the clearest case — nothing in the scheduling logic actually read it, and it wasn't stored in a usable format. I cut it because the intent behind it (when the owner wants things to happen) is already expressed through time blocks and priority.
+
+**Recurrence.** My initial Task had `is_recurring` and `recurrence` fields, but since the plan only covers a single day, those fields had nothing to attach to — there was no concept of "tomorrow" for a weekly task to land on. I removed them rather than carry dead structure, and scoped the project explicitly to one day.
+
+**Availability: one number became several blocks.** The Scheduler originally held a single `available_minutes` integer. That doesn't match how people actually have time — most owners have a morning window and an evening window, not one continuous span. I added a TimeBlock class (label, start, end) and changed `build_plan()` to take a list of them. That change cascaded: Task gained a `preferred_block` field, and ScheduledTask gained `block_label` so the plan can report where each task landed. I decided `preferred_block` is a soft preference, not a hard constraint — if the preferred block is full, the task still gets placed elsewhere rather than dropped.
+
+**Completion.** Adding the ability to mark tasks done introduced a `completed` flag on Task, which raised a question I had to answer deliberately: should `get_all_tasks()` hide completed tasks? I decided no. A task history or mark-complete view would want the full list, and only the scheduler wants them excluded, so the filtering belongs at the call site rather than baked into data access. The deciding factor was which mistake is cheaper to undo — duplicating one filter line is easier to fix than unwinding a hidden filter that every future caller inherits.
+
+**A gap I caught late.** Once an Owner could have multiple pets and tasks were flattened into a single list, nothing in the plan recorded which pet a task belonged to, so the output couldn't tell one dog's walk from another's. I added a `pet` back-reference on Task, set when `add_task()` is called.
+
+**Deliberately deferred.** Priority ties currently break by shorter duration, which I flagged in the diagram as a rule to revisit. Recurrence stays out of scope, but I kept the seam where it would go: whatever decides which tasks are due today lives inside `get_all_tasks()`, so adding recurrence later shouldn't require changing Scheduler, Plan, or Task.
+
+**The through-line.** Most of these changes came from asking the same question repeatedly: does this class actually need to know that detail, or can it just be handed a value? Keeping the Scheduler ignorant of Owner is why adding multi-pet support later cost almost nothing — I only had to change how the task list was assembled, not how it was scheduled.
 
 ---
 

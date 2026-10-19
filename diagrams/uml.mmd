@@ -1,15 +1,59 @@
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
-    %% Keep this file updated so it matches your final implementation.
+    %% PawPal+ draft UML — single owner, single pet, one day, multiple time blocks.
+    %% Refine this as implementation reveals gaps (see reflection.md 1b).
 
-    class ClassName {
-        +type attribute
-        +method() returnType
+    class Owner {
+        +str name
+        +List~Pet~ pets
+        add_pet(pet: Pet) None
+        get_all_tasks() List~Task~
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    class Pet {
+        +str name
+        +str species
+        +List~Task~ tasks
+        add_task(task: Task) None
     }
 
-    ClassName --> AnotherClass : relationship
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +str preferred_block
+        +bool completed
+        +Pet pet
+    }
+
+    class TimeBlock {
+        +str label
+        +str start_time
+        +str end_time
+        duration_minutes() int
+    }
+
+    %% TODO: sort_tasks priority ties currently break by shorter duration — revisit tie-break rule later
+    class Scheduler {
+        build_plan(tasks: List~Task~, time_blocks: List~TimeBlock~) Plan
+        sort_tasks(tasks: List~Task~) List~Task~
+    }
+
+    class Plan {
+        +List~ScheduledTask~ scheduled_tasks
+        +List~Task~ dropped_tasks
+        explain() str
+    }
+
+    class ScheduledTask {
+        +Task task
+        +str block_label
+        +str start_time
+    }
+
+    Owner "1" --> "many" Pet : owns
+    Pet "1" --> "many" Task : has
+    Task "many" --> "1" Pet : belongs to
+    Scheduler ..> Plan : creates
+    Scheduler ..> TimeBlock : uses
+    Plan "1" --> "many" ScheduledTask : contains
+    Plan "1" --> "many" Task : dropped
