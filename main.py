@@ -4,6 +4,7 @@ Builds a sample household and prints today's tasks, so the backend logic can be
 verified in the terminal before any of it is wired into the Streamlit UI.
 
 Run with:  python main.py
+Run with:  python main.py
 """
 
 from pawpal_system import Owner, Pet, Scheduler, Task, TimeBlock
