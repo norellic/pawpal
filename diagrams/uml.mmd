@@ -1,12 +1,18 @@
 classDiagram
-    %% PawPal+ draft UML — single owner, single pet, one day, multiple time blocks.
-    %% Refine this as implementation reveals gaps (see reflection.md 1b).
+    %% PawPal+ — single owner, several pets, one day, multiple time blocks.
+    %% Kept in step with pawpal_system.py; the UI (app.py) only collects input
+    %% and renders output, so every rule below lives in these classes.
 
     class Owner {
         +str name
         +List~Pet~ pets
+        rename(name: str) None
         add_pet(pet: Pet) None
+        update_pet(pet: Pet, name: str, species: str) None
+        remove_pet(pet: Pet) None
+        filter_tasks(pet_name, completed, priority, preferred_block, due_on_or_before, due_after) List~Task~
         get_all_tasks() List~Task~
+        -check_name_free(name: str, pet: Pet) None
     }
 
     class Pet {
@@ -14,6 +20,10 @@ classDiagram
         +str species
         +List~Task~ tasks
         add_task(task: Task) None
+        remove_task(task: Task) None
+        complete_task(task: Task) Task
+        uncomplete_task(task: Task) Task
+        update_details(name: str, species: str) None
     }
 
     class Task {
@@ -23,7 +33,13 @@ classDiagram
         +str preferred_block
         +bool completed
         +Pet pet
+        +int added_order
+        +str frequency
+        +date due_date
+        +Task spawned
         mark_complete() None
+        next_occurrence() Task
+        update_details(title, duration_minutes, priority, preferred_block, frequency, due_date) None
     }
 
     class TimeBlock {
@@ -37,11 +53,16 @@ classDiagram
     class Scheduler {
         build_plan(tasks: List~Task~, time_blocks: List~TimeBlock~) Plan
         sort_tasks(tasks: List~Task~) List~Task~
+        sort_by_time(scheduled: List~ScheduledTask~) List~ScheduledTask~
+        sort_by_duration(tasks: List~Task~, descending: bool) List~Task~
+        find_conflicts(scheduled: List~ScheduledTask~) List~str~
+        -find_block(task, time_blocks, minutes_used) int
     }
 
     class Plan {
         +List~ScheduledTask~ scheduled_tasks
         +List~Task~ dropped_tasks
+        +List~str~ conflicts
         explain() str
     }
 
@@ -51,10 +72,28 @@ classDiagram
         +str start_time
     }
 
+    %% Rules that belong to a set of objects rather than to any one of them,
+    %% so they're module-level functions instead of methods.
+    class pawpal_system {
+        <<module>>
+        validate_time_blocks(time_blocks: List~TimeBlock~) None
+        retarget_preferences(tasks: List~Task~, old_label: str, new_label: str) int
+    }
+
     Owner "1" --> "many" Pet : owns
     Pet "1" --> "many" Task : has
     Task "many" --> "1" Pet : belongs to
+    Task "1" --> "0..1" Task : spawned next occurrence
     Scheduler ..> Plan : creates
     Scheduler ..> TimeBlock : uses
+    Scheduler ..> pawpal_system : validates blocks via
     Plan "1" --> "many" ScheduledTask : contains
     Plan "1" --> "many" Task : dropped
+    pawpal_system ..> TimeBlock : checks labels and overlap
+    pawpal_system ..> Task : repoints preferred_block
+
+    note for Owner "Owner name cannot be blank; pet names are unique within the household (case-insensitive), so a task can always say whose it is."
+    note for Task "Blank title, non-positive duration, unknown priority and unknown frequency are rejected on creation and on edit by the same check. preferred_block names a TimeBlock label - a preference, not a hard constraint."
+    note for Pet "A Task is one occurrence on one day. Task.next_occurrence() says what comes next for its frequency; Pet.complete_task() puts it in the list and uncomplete_task() takes an untouched one back."
+    note for Plan "find_conflicts() returns warnings rather than raising: a double-booked morning is worth saying out loud, not a reason to throw the plan away. Back-to-back tasks are not a conflict."
+    note for TimeBlock "Labels must be unique and blocks must not overlap, or the same minute gets counted twice. Blocks that touch are fine."
