@@ -129,10 +129,15 @@ python -m pytest
 python -m pytest --cov
 ```
 
+The suite is in `test/`: `test_pawpal.py` covers the backend (sorting, filtering, recurrence,
+conflict detection, the packing rules and input validation) and `test_app.py` drives the
+Streamlit UI headlessly with `AppTest`.
+
 Sample test output:
 
 ```
-# Paste your pytest output here
+......................................................                   [100%]
+54 passed in 7.74s
 ```
 
 ## 📐 Smarter Scheduling

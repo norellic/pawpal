@@ -7,6 +7,7 @@ import pytest
 from pawpal_system import (
     Owner,
     Pet,
+    Plan,
     ScheduledTask,
     Scheduler,
     Task,
@@ -505,3 +506,261 @@ def test_retarget_preferences_follows_a_renamed_or_removed_block():
     assert retarget_preferences(tasks, "early", None) == 2
     assert walk.preferred_block is None
     assert brush.preferred_block is None
+
+
+# --- Conflict detection: duplicate times --------------------------------------
+
+
+def test_two_tasks_at_exactly_the_same_time_are_flagged():
+    """The plainest conflict: identical start times, same pet or different."""
+    scheduler = Scheduler()
+    mochi = Pet("Mochi", "dog")
+    biscuit = Pet("Biscuit", "cat")
+    walk = Task("Morning walk", 30, "high")
+    brush = Task("Brushing", 15, "low")
+    feed = Task("Feed Biscuit", 10, "high")
+    mochi.add_task(walk)
+    mochi.add_task(brush)
+    biscuit.add_task(feed)
+
+    same_pet = scheduler.find_conflicts(
+        [ScheduledTask(walk, "morning", "07:00"), ScheduledTask(brush, "morning", "07:00")]
+    )
+    assert len(same_pet) == 1
+    assert "Mochi is booked twice" in same_pet[0]
+
+    different_pets = scheduler.find_conflicts(
+        [ScheduledTask(walk, "morning", "07:00"), ScheduledTask(feed, "morning", "07:00")]
+    )
+    assert len(different_pets) == 1
+    assert "Mochi" in different_pets[0] and "Biscuit" in different_pets[0]
+
+
+def test_plan_explanation_reports_conflicts_only_when_there_are_some():
+    """The warning reaches the text the owner reads, and stays out when clean."""
+    clean = Plan()
+    assert "Conflicts" not in clean.explain()
+
+    flagged = Plan(conflicts=["Mochi is booked twice: ..."])
+    assert "Conflicts:" in flagged.explain()
+    assert "Mochi is booked twice" in flagged.explain()
+
+
+# --- Recurrence: chains and calendar edges ------------------------------------
+
+
+def test_completing_a_weekly_task_queues_one_for_the_following_week():
+    """Weekly steps seven days, through the pet rather than on the task alone."""
+    monday = date(2026, 10, 19)
+    pet = Pet("Mochi", "dog")
+    bath = Task("Bath", 45, "low", frequency="weekly", due_date=monday)
+    pet.add_task(bath)
+
+    follow_up = pet.complete_task(bath)
+
+    assert follow_up.due_date == monday + timedelta(days=7)
+    assert follow_up.frequency == "weekly"
+    assert follow_up.completed is False
+
+
+def test_a_repeating_task_keeps_repeating():
+    """Completing each occurrence queues the next, day after day."""
+    monday = date(2026, 10, 19)
+    pet = Pet("Mochi", "dog")
+    feed = Task("Feed Mochi", 5, "high", frequency="daily", due_date=monday)
+    pet.add_task(feed)
+
+    tuesday = pet.complete_task(feed)
+    wednesday = pet.complete_task(tuesday)
+
+    assert tuesday.due_date == date(2026, 10, 20)
+    assert wednesday.due_date == date(2026, 10, 21)
+    assert len(pet.tasks) == 3
+
+
+def test_recurrence_crosses_month_and_year_boundaries():
+    """timedelta handles the calendar, including the awkward ends of it."""
+    end_of_month = Task("Feed Mochi", 5, "high", frequency="daily", due_date=date(2026, 10, 31))
+    end_of_year = Task("Bath", 45, "low", frequency="weekly", due_date=date(2026, 12, 28))
+    leap_day = Task("Feed Mochi", 5, "high", frequency="daily", due_date=date(2028, 2, 28))
+
+    assert end_of_month.next_occurrence().due_date == date(2026, 11, 1)
+    assert end_of_year.next_occurrence().due_date == date(2027, 1, 4)
+    assert leap_day.next_occurrence().due_date == date(2028, 2, 29)
+
+
+# --- Scheduling: the packing rules --------------------------------------------
+
+
+def _pet_with(*tasks: Task) -> Pet:
+    """A pet holding these tasks, so they have a pet name to report."""
+    pet = Pet("Mochi", "dog")
+    for task in tasks:
+        pet.add_task(task)
+    return pet
+
+
+def test_a_task_moves_to_another_block_when_its_preferred_one_is_full():
+    """preferred_block is a preference: a full block bumps, it doesn't drop."""
+    blocks = [TimeBlock("morning", "07:00", "07:30"), TimeBlock("evening", "17:00", "18:00")]
+    walk = Task("Morning walk", 30, "high", preferred_block="morning")
+    brush = Task("Brushing", 20, "medium", preferred_block="morning")
+    _pet_with(walk, brush)
+
+    plan = Scheduler().build_plan([walk, brush], blocks)
+
+    placed = {entry.task.title: entry for entry in plan.scheduled_tasks}
+    assert placed["Morning walk"].block_label == "morning"
+    assert placed["Brushing"].block_label == "evening"
+    assert placed["Brushing"].start_time == "17:00"
+    assert plan.dropped_tasks == []
+    assert "was full, moved to 'evening'" in plan.explain()
+
+
+def test_a_task_too_big_for_every_block_is_dropped_with_a_reason():
+    """Nothing overflows a block; the plan says what it left out and why."""
+    blocks = [TimeBlock("morning", "07:00", "07:30")]
+    big = Task("Long hike", 45, "high")
+    _pet_with(big)
+
+    plan = Scheduler().build_plan([big], blocks)
+
+    assert plan.scheduled_tasks == []
+    assert plan.dropped_tasks == [big]
+    assert "Dropped" in plan.explain()
+    assert "needs 45 min" in plan.explain()
+
+
+def test_an_empty_block_list_drops_everything_without_crashing():
+    """No availability is a valid input, not an error."""
+    walk = Task("Morning walk", 30, "high")
+    _pet_with(walk)
+
+    plan = Scheduler().build_plan([walk], [])
+
+    assert plan.scheduled_tasks == []
+    assert plan.dropped_tasks == [walk]
+
+
+def test_an_empty_task_list_makes_an_empty_plan():
+    """Nothing to do is also a valid input."""
+    plan = Scheduler().build_plan([], [TimeBlock("morning", "07:00", "09:00")])
+
+    assert plan.scheduled_tasks == []
+    assert plan.dropped_tasks == []
+    assert plan.conflicts == []
+    assert "Scheduled 0 of 0 tasks" in plan.explain()
+
+
+def test_tasks_that_exactly_fill_a_block_fit_and_one_more_minute_does_not():
+    """The boundary: remaining time equal to the duration is enough."""
+    blocks = [TimeBlock("morning", "07:00", "07:30")]
+    first = Task("Walk", 20, "high")
+    second = Task("Brush", 10, "medium")
+    spare = Task("Water bowl", 1, "low")
+    _pet_with(first, second, spare)
+
+    plan = Scheduler().build_plan([first, second, spare], blocks)
+
+    assert [entry.task.title for entry in plan.scheduled_tasks] == ["Walk", "Brush"]
+    assert plan.dropped_tasks == [spare]
+
+
+def test_higher_priority_is_placed_first_and_shorter_breaks_ties():
+    """Priority orders the packing; within a priority, shorter goes first."""
+    blocks = [TimeBlock("morning", "07:00", "09:00")]
+    low = Task("Brushing", 10, "low")
+    medium = Task("Litter box", 10, "medium")
+    long_high = Task("Long walk", 30, "high")
+    short_high = Task("Feed", 5, "high")
+    _pet_with(low, medium, long_high, short_high)
+
+    plan = Scheduler().build_plan([low, medium, long_high, short_high], blocks)
+
+    assert [entry.task.title for entry in plan.scheduled_tasks] == [
+        "Feed",
+        "Long walk",
+        "Litter box",
+        "Brushing",
+    ]
+    assert Scheduler().sort_tasks([low, medium, long_high, short_high]) == [
+        short_high,
+        long_high,
+        medium,
+        low,
+    ]
+
+
+def test_priority_beats_fitting_more_tasks_in():
+    """Pins the greedy tradeoff from reflection.md 2b so changing it is deliberate."""
+    blocks = [TimeBlock("morning", "07:00", "07:30")]
+    walk = Task("Long walk", 25, "high")
+    brush = Task("Brushing", 15, "medium")
+    chew = Task("Dental chew", 15, "medium")
+    _pet_with(walk, brush, chew)
+
+    plan = Scheduler().build_plan([walk, brush, chew], blocks)
+
+    assert [entry.task.title for entry in plan.scheduled_tasks] == ["Long walk"]
+    assert {task.title for task in plan.dropped_tasks} == {"Brushing", "Dental chew"}
+
+
+# --- Input validation ---------------------------------------------------------
+
+
+def test_a_task_cannot_be_created_with_bad_details():
+    """The same checks that guard an edit guard creation."""
+    with pytest.raises(ValueError, match="title"):
+        Task("   ", 30, "high")
+    with pytest.raises(ValueError, match="duration"):
+        Task("Walk", 0, "high")
+    with pytest.raises(ValueError, match="duration"):
+        Task("Walk", -5, "high")
+    with pytest.raises(ValueError, match="priority"):
+        Task("Walk", 30, "urgent")
+
+
+def test_a_time_block_must_be_a_real_window():
+    """Ends after it starts, and both ends are real times of day."""
+    with pytest.raises(ValueError, match="ends at or before"):
+        TimeBlock("morning", "09:00", "07:00")
+    with pytest.raises(ValueError, match="ends at or before"):
+        TimeBlock("morning", "09:00", "09:00")
+    with pytest.raises(ValueError, match="HH:MM"):
+        TimeBlock("morning", "7am", "09:00")
+    with pytest.raises(ValueError, match="single day"):
+        TimeBlock("morning", "07:00", "25:00")
+
+    assert TimeBlock("morning", "07:00", "09:00").duration_minutes() == 120
+
+
+# --- Household behaviour ------------------------------------------------------
+
+
+def test_all_tasks_come_back_in_the_order_they_were_added_across_pets():
+    """Interleaved adds stay interleaved, rather than grouping by pet."""
+    owner = Owner("Jordan Rivera")
+    mochi = Pet("Mochi", "dog")
+    biscuit = Pet("Biscuit", "cat")
+    owner.add_pet(mochi)
+    owner.add_pet(biscuit)
+
+    first = Task("Walk", 30, "high")
+    second = Task("Feed Biscuit", 5, "high")
+    third = Task("Brush", 15, "low")
+    mochi.add_task(first)
+    biscuit.add_task(second)
+    mochi.add_task(third)
+
+    assert owner.get_all_tasks() == [first, second, third]
+
+
+def test_a_pet_can_be_renamed_to_a_different_case_of_its_own_name():
+    """A pet doesn't clash with itself, so fixing a capital is allowed."""
+    owner = Owner("Jordan Rivera")
+    mochi = Pet("mochi", "dog")
+    owner.add_pet(mochi)
+
+    owner.update_pet(mochi, "Mochi", "dog")
+
+    assert mochi.name == "Mochi"

@@ -99,15 +99,20 @@ Several times. The clearest was the `preferences` field on Owner: the first UML 
 
 For verification, this first push was deliberately CLI-first. I ran `python main.py` and read the actual terminal output to confirm the sample household, task list, and generated schedule looked the way I expected — that tasks were sorted by priority, landed in their preferred blocks, and that the totals added up. I also checked edge cases by hand: a full preferred block correctly bumps a task elsewhere instead of dropping it, an oversized task gets dropped with a stated reason, and an empty block list doesn't crash. Then I wrote basic pytest tests covering task completion and task addition, to lock in that the data can be created, organized, and modified as intended.
 
-That was enough to trust the core, not enough to call it verified, and I noted at the time that the tests only covered data handling. That has changed. The suite now has 28 tests, and most of what I said was missing has been written:
+That was enough to trust the core, not enough to call it verified, and I noted at the time that the tests only covered data handling. That has changed. The suite now has 54 tests, and what I said was missing has been written:
 
 - **Data handling:** completing a task, adding a task, editing a task or pet without losing its completion status or pet link, removing a task or pet by identity, and rejecting blank names.
 - **Household rules:** pet names must be unique, block labels must be unique, blocks can't overlap (though blocks that touch are fine), and renaming or removing a block updates the tasks that preferred it.
 - **Sorting and filtering:** scheduled tasks come back in clock order, including the case where string order could have gone wrong with afternoon times; duration sorts both directions; and `filter_tasks()` narrows by pet, status, priority, block and due date, singly and combined.
 - **Recurrence:** the next date for each frequency, unknown frequencies rejected on create and on edit, completing queues the next occurrence once and never twice, and Undo withdraws the queued occurrence unless it has been edited or completed in its own right.
-- **Conflict detection:** same-pet and cross-pet overlaps are reported with every pair listed, back-to-back tasks are not flagged, and a plan built by `build_plan()` comes back clean.
+- **Conflict detection:** two tasks at exactly the same time are flagged (same pet or different pets), partial overlaps are flagged with every pair listed, back-to-back tasks are not, the warning reaches `Plan.explain()`, and a plan built by `build_plan()` comes back clean.
+- **The packing rules I used to check by eye:** a full preferred block moves a task to another block instead of dropping it, an oversized task is dropped with a stated reason, an empty block list or empty task list doesn't crash, a task that exactly fills a block fits while one more minute doesn't, and priority orders placement with shorter tasks first within a priority. One test also pins the greedy tradeoff from 2b, so changing it later has to be deliberate.
+- **Validation and calendar edges:** bad task details and impossible time blocks are rejected, and recurrence crosses month, year and leap-day boundaries.
+- **The Streamlit UI** (`test/test_app.py`, driven headlessly with Streamlit's `AppTest`): the plan stays on screen after a task is marked done, marking a daily task done queues tomorrow's and Undo takes it back, overlapping availability blocks the plan, deleting a pet asks first, a renamed block carries over to its tasks, and the filters and sort change what the list shows.
 
-What the tests still don't cover is the core packing behavior I originally checked by eye: that a full preferred block bumps a task elsewhere, that an oversized task is dropped with a reason, that an empty block list doesn't crash, and the duration tie-break. The Streamlit UI is also untested by the suite. I drove it with throwaway headless scripts while building each feature, but those aren't committed, so they won't catch a regression later.
+I checked that these tests can actually fail, not only that they pass. I broke the code on purpose in throwaway copies, ten ways in total, including sorting latest-first, a daily task queuing the same day, conflicts compared on start times only, touching tasks counted as conflicts, and the original plan-vanishes bug. Every one made at least one test fail.
+
+What is still not covered: equal-length tasks in the duration sort (the stable-sort behaviour is only described in its docstring), the app's edit form for a task's frequency and due date (I drove it by hand but didn't commit a test), and the date itself. The UI tests use today's real date, so a run that straddled midnight could in principle fail one.
 
 ---
 
@@ -118,10 +123,39 @@ What the tests still don't cover is the core packing behavior I originally check
 - What behaviors did you test?
 - Why were these tests important?
 
+The suite has 54 tests: 44 against the backend classes in `test/test_pawpal.py` and 10 that drive the Streamlit app headlessly in `test/test_app.py`. They fall into five groups.
+
+1. **The scheduling algorithms.** Sorting returns clock order (including the afternoon case where text order could have gone wrong), recurrence queues the right next date for daily and weekly tasks, and conflict detection flags tasks at the same time and tasks that partly overlap while leaving back-to-back tasks alone. These are the features the project is built around, so they got the most direct tests.
+2. **The packing rules.** A full preferred block moves a task instead of dropping it, an oversized task is dropped with a reason, empty inputs don't crash, a task that exactly fills a block fits while one more minute doesn't, and priority decides placement. I originally checked all of these by eye in the terminal, which meant a later change could break them without anyone noticing. Pinning them as tests was the most valuable step for the scheduler's reliability.
+3. **Rules that keep the data honest.** Pet names and block labels must be unique, blocks can't overlap, blank names are refused, and a task can't be edited into a state it couldn't have been created in. These matter because the scheduler trusts its inputs. A duplicate pet name or two overlapping blocks doesn't crash anything, it just produces a plan that is quietly wrong, which is the worst kind of failure for a tool people rely on.
+4. **Undo and cleanup paths.** Undoing a completion withdraws the queued occurrence unless it has been edited since, completing a task twice doesn't queue two copies, and renaming or removing a block updates the tasks that preferred it. Features like these tend to be right on the happy path and wrong on the second click, so I tested the second click.
+5. **What the user actually sees.** The UI tests cover the plan staying on screen after a task is marked done (it used to vanish on the next click), overlapping availability blocking the plan, delete asking for confirmation, and the filters and sort changing the list. These bugs were found by using the app, not by reading the backend, so they needed tests at the app level.
+
+I also checked that the tests can fail. Passing tests only mean something if they would have caught the bug, so I broke the code on purpose in throwaway copies, ten different ways, and confirmed each break made at least one test fail.
+
 **b. Confidence**
 
 - How confident are you that your scheduler works correctly?
 - What edge cases would you test next if you had more time?
+
+**Confidence level: ★★★★☆ (4 out of 5).**
+
+I'm confident in the scheduling logic itself. Every rule it applies is covered by a test, the required behaviors (sorting, recurrence, conflict detection) are covered more than once, and the deliberate breakage check shows the tests are sensitive to real mistakes, not just present. The suite passes in a few seconds, so it is cheap to run after every change.
+
+I stopped at four because of what the tests can't see, not because I know of a failure:
+
+- **The UI is tested through `AppTest`, not a real browser.** It proves the logic wired into the page works, but not how the page looks or whether a layout breaks at a different width.
+- **The tests lean on today's date in the UI.** A test run that straddled midnight could fail one.
+- **Nothing is saved between sessions.** Closing the app loses the household, which limits how much a daily recurring task can mean in practice.
+- **The scheduler is greedy.** One test pins that behavior, but passing it only proves the plan follows my rule, not that the rule gives the best plan for every household.
+
+The edge cases I would test next, roughly in order of how likely I think they are to expose something:
+
+1. **Completing a task late.** The next occurrence is dated from the task's due date, not from when it was completed. A daily task due Monday and completed on Thursday queues one due Tuesday, which is already overdue. That might be right (the owner still owes those days) or wrong (they would rather start fresh), and I haven't decided or tested it.
+2. **Time that is fragmented across blocks.** Tasks are never split, so two blocks with 10 free minutes each can't hold a 15-minute task even though 20 minutes are free. The task is dropped and the plan says so, but I haven't tested how often that happens with realistic data.
+3. **Overnight availability.** A block like 22:00 to 02:00 is rejected as ending before it starts, which is accurate but unhelpful for someone with a night routine.
+4. **Midnight rollover and a fixed clock.** Freezing the date in the UI tests would remove the flaky-at-midnight case and let me test "overdue" and "due tomorrow" at known dates.
+5. **Equal-length tasks in the duration sort**, and **larger households.** Conflict detection is quadratic in the worst case, which is irrelevant for dozens of tasks, but I haven't run it on thousands to confirm.
 
 ---
 
