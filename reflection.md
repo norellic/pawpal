@@ -165,10 +165,24 @@ The edge cases I would test next, roughly in order of how likely I think they ar
 
 - What part of this project are you most satisfied with?
 
+The part I'm most satisfied with is that the architecture held up under features I hadn't planned for. The rule from the first design, that the Scheduler only ever receives a flat list of tasks and never an Owner, meant that multiple pets, a filterable task list, due dates and recurrence were all added without rewriting how the plan is built. Recurrence is the clearest case. It was out of scope at the start and got added late as a required feature, and the Scheduler didn't need to change for it. The new behavior lived in Task (what the next occurrence is) and Pet (wheere it goes), which is where I'd have put it if I'd planed for it.
+
+I'm also satisfied with how the app got tested, because it wasn't only unit tests. I used the app and reported what felt wrong, and each report became a fix: availability blocks that overlapped and doublecounted minutes, and no way to edit or delete a pet. When I then asked for a review of the whole experience, it turned up more of the same kind, such as the plan disappearing every time a task was tickd off and two pets sharing a name. Several fixes also exposed a second bug next to the first: renaming a block left tasks pointing at a block that no longer existed, and the dropdowns showed the previous run's labels. Non of that was obvious from reading the code.
+
 **b. What you would improve**
 
 - If you had another iteration, what would you improve or redesign?
 
+Three things, in the order I'd do them.
+
+1. **Save the data.** Nothing survives closing the app, which undercuts the features that depend on time. A daily task that queues tomorrow's copy only means something if tomorrow's copy is still there tomorrow. Saving the household to a file would be the single change that makes the app genuinely usable day to day.
+2. **Pack tasks more cleverly.** The scheduler is greedy: it places tasks by priority and never reconsiders. That gives a plan I can explain in one sentence, but it can leave usable time empty. Two blocks with 10 free minutes each can't hold a 15-minute task, and a high-priority task can crowd out two smaller ones that would have fit together. I'd want to try allowing a task to be split across blocks, and to compare the greedy result with a best-fit one.
+3. **Settle the questions I left open.** Completing a daily task late queues the next one from its original due date, so it can be overdue the moment it appears. Overnight availability like 22:00 to 02:00 is rejected. The duration tie-break is still a placeholder from the first UML. I also dropped the idea of giving availability days of the week, because recurrence didn't need it, but a weekly task like a Saturday grooming session would be better served by it.
+
 **c. Key takeaway**
 
 - What is one important thing you learned about designing systems or working with AI on this project?
+
+The most important thing I learned is that a design is a set of decisions about what to leave out, and the AI will not make those for me. It was quick to build whatever I described, and ready to offer more: a date picker for the plan, clearing the add-task form, extra filters. Each one sounded reasonable, and each would have cost time or changed how I wanted the app to feel. I turned several down, for example keeping the add-task form filled so I could enter the same task for different times of day quickly. The useful moments were when I stopped and asked what a feature actually needed. I floated giving availability days of the week, then dropped it once it was clear recurrence only needed a date and a frequency rather than a whole weekly calendar. Scope was my job, and the AI was best used as something to argue with before I decided.
+
+The second lesson is about trusting what it produces. All the backend tests passed the first time I ran them, which should make you more suspicious, not less, because a test that can't fail isn't telling you anything. So I broke the code on purpose and checked that the tests noticed. The same applied to the AI's claims about the app. At one point it described how the app behaved and got a detail wrong: a completed task it said disappears from the list actually stays there, struck through. Checking the explanation against the running app, rather than agreeing with it, is what caught that.

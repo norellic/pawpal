@@ -84,10 +84,13 @@ classDiagram
     Pet "1" --> "many" Task : has
     Task "many" --> "1" Pet : belongs to
     Task "1" --> "0..1" Task : spawned next occurrence
+    Task ..> TimeBlock : prefers, by label
+    Scheduler ..> Task : orders and places
     Scheduler ..> Plan : creates
     Scheduler ..> TimeBlock : uses
     Scheduler ..> pawpal_system : validates blocks via
     Plan "1" --> "many" ScheduledTask : contains
+    ScheduledTask "many" --> "1" Task : schedules
     Plan "1" --> "many" Task : dropped
     pawpal_system ..> TimeBlock : checks labels and overlap
     pawpal_system ..> Task : repoints preferred_block
