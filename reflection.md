@@ -62,10 +62,20 @@ Quite a bit. Most of the change happened while iterating on the UML itself, befo
 - How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
 - What kinds of prompts or questions were most helpful?
 
+I used AI mostly for design brainstorming and for translating decisions into code once I had made them. It drafted the first UML, turned that diagram into dataclass stubs, and then filled in the scheduling logic in `pawpal_system.py` and the terminal script in `main.py`.
+
+The most useful prompts weren't requests for code. Asking "what questions should I consider here?" before deciding something got me a list of tradeoffs to weigh instead of an answer I'd have accepted without understanding. Asking "why does this logic live here rather than there?" was similarly useful — it forced an explanation of the architectural rule being applied, which I could then judge on its own terms. Asking it to point out missing relationships or bottlenecks in the UML also surfaced a real gap I hadn't noticed: once an Owner could have multiple pets, nothing in the plan recorded which pet a task belonged to.
+
 **b. Judgment and verification**
 
 - Describe one moment where you did not accept an AI suggestion as-is.
 - How did you evaluate or verify what the AI suggested?
+
+Several times. The clearest was the `preferences` field on Owner: the first UML draft gave the owner a free-text preferences field, but nothing in the scheduling logic actually read it, and it wasn't stored in a format anything could use. I rejected the whole approach rather than asking for it to be wired up, because the information it was trying to capture — when the owner wants things to happen — is already expressed by time blocks and priority. I also caught that the draft's recurrence fields were meaningless in a single-day plan, since there was no concept of a next day for a weekly task to land on, and cut them rather than carry dead structure.
+
+For verification, this first push was deliberately CLI-first. I ran `python main.py` and read the actual terminal output to confirm the sample household, task list, and generated schedule looked the way I expected — that tasks were sorted by priority, landed in their preferred blocks, and that the totals added up. I also checked edge cases by hand: a full preferred block correctly bumps a task elsewhere instead of dropping it, an oversized task gets dropped with a stated reason, and an empty block list doesn't crash. Then I wrote basic pytest tests covering task completion and task addition, to lock in that the data can be created, organized, and modified as intended.
+
+That's enough to trust the core, not enough to call it verified. The tests so far cover data handling rather than the scheduling algorithm itself, and the edge cases I checked were checked by eye in the terminal rather than pinned down as tests. Those are the next things to write as the functionality grows.
 
 ---
 
